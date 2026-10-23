@@ -1,0 +1,53 @@
+# Configuración local del asistente
+CLAUDE.md
+.claude/
+
+# Datos pesados: no se versionan (se conserva solo la carpeta)
+grabaciones/*
+!grabaciones/.gitkeep
+datos/*
+!datos/.gitkeep
+modelos/*
+!modelos/.gitkeep
+
+# Vídeos e imágenes en bruto fuera de esas carpetas
+*.mp4
+*.avi
+*.mkv
+*.h264
+*.h265
+*.mjpeg
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# YOLO / ultralytics
+runs/
+*.pt
+*.onnx
+*.blob
+
+# LaTeX (archivos auxiliares)
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Editores y sistema
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
