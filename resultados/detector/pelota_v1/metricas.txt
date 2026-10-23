@@ -1,0 +1,16 @@
+Modelo: modelos/entrenamientos/pelota_v1/weights/best.pt
+Clips: pruebas_primer_dia/clip_001/parte_5, 20261023_133016/clip_002/parte_5 (cámara izq, todos los frames)
+Alumno conf >= 0.25; referencia = profesor conf >= 0.5
+
+Frames: 3155
+  con referencia del profesor: 702
+  alumno detecta (algo): 1279
+  solo el alumno detecta (sin referencia): 579
+  ninguno de los dos: 1874
+
+Sensibilidad respecto al profesor (IoU >= 0,5): 700/702 = 0.997
+IoU medio en aciertos: 0.956
+  lejos (<15 px)          70/71    = 0.986
+  media (15-30 px)       435/436   = 0.998
+  cerca (30-50 px)       186/186   = 1.000
+  muy cerca (>50 px)       9/9     = 1.000

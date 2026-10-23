@@ -9,6 +9,12 @@ lenta y avance frame a frame.
     python codigo/ver_clip.py grabaciones/pruebas_primer_dia/clip_001         # una secuencia
     python codigo/ver_clip.py grabaciones/pruebas_primer_dia/clip_001/parte_3 --velocidad 0.25
     python codigo/ver_clip.py grabaciones/pruebas_primer_dia --pantalla-completa
+    python codigo/ver_clip.py grabaciones/20261023_133016/clip_002/parte_5 \
+        --modelo modelos/entrenamientos/pelota_v1/weights/best.pt      # dibuja las detecciones
+
+Con --modelo se pasa el detector (.pt de Ultralytics, en el host) por cada
+frame mostrado de izquierda y derecha y se dibujan las cajas con su confianza.
+Sin GPU la reproducción a ×1 se salta frames; usar cámara lenta o frame a frame.
 
 Teclas:
     Espacio        pausa / seguir
@@ -37,7 +43,7 @@ VELOCIDADES = {ord("1"): 1.0, ord("2"): 0.5, ord("3"): 0.25, ord("4"): 0.1}
 # Códigos de flecha según el backend de ventanas de OpenCV (GTK/X11 y Qt)
 IZQUIERDA = {65361, 2424832, 16777234, ord("a")}
 DERECHA = {65363, 2555904, 16777236, ord("d")}
-ROJO, BLANCO, GRIS = (60, 60, 230), (255, 255, 255), (170, 170, 170)
+ROJO, BLANCO, GRIS, VERDE = (60, 60, 230), (255, 255, 255), (170, 170, 170), (80, 220, 80)
 
 
 def en_pantalla_completa():
@@ -63,13 +69,40 @@ def texto(imagen, cadena, posicion, color=BLANCO, escala=0.5):
     cv2.putText(imagen, cadena, posicion, cv2.FONT_HERSHEY_SIMPLEX, escala, color, 1, cv2.LINE_AA)
 
 
+class Detector:
+    """Detector YOLO en el host; recuerda el último resultado de cada cámara (en pausa no se repite)."""
+
+    def __init__(self, ruta, conf, imgsz, dispositivo):
+        from ultralytics import YOLO
+
+        self.modelo = YOLO(str(ruta))
+        self.conf, self.imgsz, self.dispositivo = conf, imgsz, dispositivo
+        self._cache = {}
+        self.ms = 0.0
+
+    def dibujar(self, imagen, clave):
+        """Dibuja sobre imagen las cajas del frame clave = (clip, cámara, índice)."""
+        camara = clave[:2]
+        if self._cache.get(camara, (None,))[0] != clave:
+            inicio = time.perf_counter()
+            resultado = self.modelo.predict(imagen, conf=self.conf, imgsz=self.imgsz, device=self.dispositivo,
+                                            verbose=False)[0]
+            self.ms = (time.perf_counter() - inicio) * 1000
+            self._cache[camara] = (clave, list(zip(resultado.boxes.xyxy.tolist(), resultado.boxes.conf.tolist())))
+        for (x1, y1, x2, y2), confianza in self._cache[camara][1]:
+            cv2.rectangle(imagen, (round(x1), round(y1)), (round(x2), round(y2)), VERDE, 1)
+            texto(imagen, f"{confianza:.2f}", (round(x1), max(12, round(y1) - 4)), VERDE, 0.4)
+        return len(self._cache[camara][1])
+
+
 class Reproductor:
-    def __init__(self, clip, posicion_clip, velocidad, solo_izq, mostrar_color):
+    def __init__(self, clip, posicion_clip, velocidad, solo_izq, mostrar_color, detector=None):
         self.clip = clip
         self.posicion_clip = posicion_clip  # (índice, total) dentro de la lista de clips
         self.velocidad = velocidad
         self.solo_izq = solo_izq
         self.mostrar_color = mostrar_color
+        self.detector = detector
         self.stream = clip.principal
         self.i = 0
         self.t = 0.0  # segundos de vídeo desde el inicio del clip
@@ -93,11 +126,16 @@ class Reproductor:
         clip, i = self.clip, self.i
         izq = self.stream.leer_bgr(i)
         alto = izq.shape[0]
+        detecciones = []
+        if self.detector is not None:
+            detecciones.append(self.detector.dibujar(izq, (clip.nombre, "principal", i)))
         paneles = [izq]
         if not self.solo_izq and "der" in clip.streams and self.stream is clip.streams.get("izq"):
             j = clip.pareja("der", i)
             if j is not None:
                 der = clip.streams["der"].leer_bgr(j)
+                if self.detector is not None:
+                    detecciones.append(self.detector.dibujar(der, (clip.nombre, "der", j)))
             else:
                 der = np.zeros_like(izq)
                 texto(der, "frame derecho no guardado", (20, alto // 2), ROJO, 0.7)
@@ -123,9 +161,14 @@ class Reproductor:
         texto(imagen, f"t = {self.t:6.3f} / {clip.duracion():.3f} s   frame {i + 1}/{len(self.stream)}   "
                       f"{clip.fps_nominal:.0f} FPS nominales   {estado}", (10, 44))
         texto(imagen, f"exposicion {self.stream.exposiciones_us[i]} us  ISO {self.stream.isos[i]}", (10, 66), GRIS)
+        fila = 88
+        if self.detector is not None:
+            texto(imagen, f"detecciones {' / '.join(map(str, detecciones))}  (conf >= {self.detector.conf:g}, "
+                          f"{self.detector.ms:.0f} ms)", (10, fila), VERDE)
+            fila += 22
         perdidos = self.stream.perdidos_antes(i)
         if perdidos:
-            texto(imagen, f"+{perdidos} frame(s) perdido(s) antes de este", (10, 88), ROJO)
+            texto(imagen, f"+{perdidos} frame(s) perdido(s) antes de este", (10, fila), ROJO)
         return imagen
 
     def ejecutar(self):
@@ -204,11 +247,16 @@ def main():
     parser.add_argument("--sin-color", action="store_true",
                         help="no mostrar la cámara a color al empezar (se puede activar con c)")
     parser.add_argument("--pantalla-completa", action="store_true", help="empezar en pantalla completa")
+    parser.add_argument("--modelo", help="detector .pt (Ultralytics) para dibujar las detecciones")
+    parser.add_argument("--conf", type=float, default=0.25, help="confianza mínima de las detecciones")
+    parser.add_argument("--imgsz", type=int, default=640, help="tamaño de inferencia del detector")
+    parser.add_argument("--dispositivo", default=None, help="cpu, 0 (GPU)... por defecto, GPU si hay")
     args = parser.parse_args()
 
     carpetas = buscar_clips(args.ruta)
     if not carpetas:
         sys.exit(f"No hay clips (carpetas con tiempos.csv) en {args.ruta}")
+    detector = Detector(args.modelo, args.conf, args.imgsz, args.dispositivo) if args.modelo else None
 
     # Ventana redimensionable que conserva la proporción de la imagen (necesario para pantalla completa)
     cv2.namedWindow(VENTANA, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL)
@@ -220,7 +268,7 @@ def main():
         if not clip.principal.completo:
             print(f"AVISO: {clip.nombre}: el tamaño del vídeo no cuadra con tiempos.csv (¿grabación interrumpida?)")
         cargar_color(clip, mostrar_color)
-        reproductor = Reproductor(clip, (k, len(carpetas)), velocidad, args.solo_izq, mostrar_color)
+        reproductor = Reproductor(clip, (k, len(carpetas)), velocidad, args.solo_izq, mostrar_color, detector)
         accion = reproductor.ejecutar()
         velocidad, mostrar_color = reproductor.velocidad, reproductor.mostrar_color
         clip.cerrar()
