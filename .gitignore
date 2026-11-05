@@ -3,12 +3,13 @@ CLAUDE.md
 .claude/
 
 # Datos pesados: no se versionan (se conserva solo la carpeta)
-grabaciones/*
-!grabaciones/.gitkeep
-datos/*
-!datos/.gitkeep
-modelos/*
-!modelos/.gitkeep
+# (en cualquiera de los dos enfoques: Intento_yolo/ y Optimizacion_tracknet_centernet/)
+**/grabaciones/*
+!**/grabaciones/.gitkeep
+**/datos/*
+!**/datos/.gitkeep
+**/modelos/*
+!**/modelos/.gitkeep
 
 # Vídeos e imágenes en bruto fuera de esas carpetas
 *.mp4

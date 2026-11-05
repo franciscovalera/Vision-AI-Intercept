@@ -12,6 +12,11 @@ pausas de P segundos, todas dentro de una misma carpeta clip_NNN.
 Con --sesion se continúa (o se crea) grabaciones/NOMBRE en lugar de una
 carpeta con la fecha y hora.
 
+Exposición automática: con «Máx. auto» la cámara no pasa de ese tiempo (sube el
+ISO en su lugar), para que la pelota no deje estela con poca luz. Con «Marcar
+zona» se arrastra un rectángulo sobre una de las vistas y la luz se mide solo
+ahí (p. ej. el suelo y la portería, sin las ventanas).
+
 Atajos: Espacio o R para empezar/parar un clip.
 """
 
@@ -22,15 +27,16 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
                                QPushButton, QSizePolicy, QSlider, QSpinBox, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
-from grabacion import (CARPETA_GRABACIONES, ETIQUETAS, EXPOSICION_MIN_US, ISO_MAX, ISO_MIN, RESOLUCIONES_MONO,
-                       TAMANO_PREVIEW_COLOR, Configuracion, Grabadora, Secuencia, Sesion, exposicion_maxima_us)
+from grabacion import (CARPETA_GRABACIONES, ETIQUETAS, EXPOSICION_MIN_US, FRANJAS, ISO_MAX, ISO_MIN,
+                       LIMITE_AUTO_US, RESOLUCIONES_MONO, TAMANO_PREVIEW_COLOR, ZONAS_TIRO, Configuracion,
+                       Grabadora, Secuencia, Sesion, exposicion_maxima_us, franja_actual)
 
 UMBRAL_SATURACION = 250
 COLOR_ROJO = "#d32f2f"
@@ -49,15 +55,77 @@ def jpeg_a_pixmap(jpeg, resaltar_saturacion):
 
 
 class VistaCamara(QLabel):
-    """Imagen de una cámara escalada al tamaño disponible, con borde rojo al grabar."""
+    """Imagen de una cámara escalada al tamaño disponible, con borde rojo al grabar.
 
-    def __init__(self, titulo):
+    Dibuja encima la zona de medida de la exposición y, tras empezar_marcado(), deja
+    arrastrar un rectángulo nuevo; al soltar llama a al_marcar_zona((x, y, ancho, alto))
+    con fracciones de la imagen.
+    """
+
+    def __init__(self, titulo, al_marcar_zona=None):
         super().__init__(f"{titulo}\n(esperando cámara)")
         self.setAlignment(Qt.AlignCenter)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setMinimumSize(320, 200)
         self._pixmap = None
+        self.zona = None
+        self._al_marcar_zona = al_marcar_zona
+        self._marcando = False
+        self._inicio = None  # esquina donde empezó el arrastre (fracciones)
+        self._arrastre = None  # zona provisional mientras se arrastra
         self.marcar_grabando(False)
+
+    def poner_zona(self, zona):
+        self.zona = zona
+        self._redibujar()
+
+    def empezar_marcado(self):
+        self._marcando = True
+        self.setCursor(Qt.CrossCursor)
+
+    def cancelar_marcado(self):
+        self._marcando = False
+        self._inicio = self._arrastre = None
+        self.unsetCursor()
+        self._redibujar()
+
+    def _area_imagen(self):
+        """Rectángulo del widget que ocupa la imagen escalada (centrada y con su proporción)."""
+        if self._pixmap is None:
+            return None
+        contenido = self.contentsRect()
+        tamano = self._pixmap.size().scaled(contenido.size(), Qt.KeepAspectRatio)
+        x = contenido.x() + (contenido.width() - tamano.width()) / 2
+        y = contenido.y() + (contenido.height() - tamano.height()) / 2
+        return QRectF(x, y, tamano.width(), tamano.height())
+
+    def _a_fraccion(self, posicion):
+        area = self._area_imagen()
+        fx = (posicion.x() - area.x()) / area.width()
+        fy = (posicion.y() - area.y()) / area.height()
+        return min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
+
+    def mousePressEvent(self, evento):
+        if self._marcando and evento.button() == Qt.LeftButton and self._pixmap is not None:
+            self._inicio = self._a_fraccion(evento.position())
+            self._arrastre = (*self._inicio, 0.0, 0.0)
+        super().mousePressEvent(evento)
+
+    def mouseMoveEvent(self, evento):
+        if self._inicio is not None:
+            fx, fy = self._a_fraccion(evento.position())
+            x0, y0 = self._inicio
+            self._arrastre = (min(x0, fx), min(y0, fy), abs(fx - x0), abs(fy - y0))
+            self._redibujar()
+        super().mouseMoveEvent(evento)
+
+    def mouseReleaseEvent(self, evento):
+        if self._inicio is not None:
+            zona = self._arrastre
+            self.cancelar_marcado()
+            if zona[2] > 0.02 and zona[3] > 0.02 and self._al_marcar_zona is not None:
+                self._al_marcar_zona(tuple(round(v, 4) for v in zona))
+        super().mouseReleaseEvent(evento)
 
     def mostrar(self, pixmap):
         self._pixmap = pixmap
@@ -68,8 +136,20 @@ class VistaCamara(QLabel):
         super().resizeEvent(evento)
 
     def _redibujar(self):
-        if self._pixmap is not None:
-            self.setPixmap(self._pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if self._pixmap is None:
+            return
+        escalado = self._pixmap.scaled(self.contentsRect().size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        zona = self._arrastre or self.zona
+        if zona is not None:
+            x, y, ancho, alto = zona
+            pintor = QPainter(escalado)
+            pluma = QPen(QColor("#ffd600"), 2, Qt.DashLine)
+            pintor.setPen(pluma)
+            w, h = escalado.width(), escalado.height()
+            pintor.drawRect(QRectF(QPointF(x * w, y * h), QPointF((x + ancho) * w - 1, (y + alto) * h - 1)))
+            pintor.drawText(QPointF(x * w + 4, y * h + 14), "medida exposición")
+            pintor.end()
+        self.setPixmap(escalado)
 
     def marcar_grabando(self, grabando):
         borde = f"4px solid {COLOR_ROJO}" if grabando else "4px solid #444"
@@ -101,8 +181,9 @@ class VentanaGrabacion(QMainWindow):
     # --- construcción de la interfaz ---
 
     def _construir_interfaz(self):
-        self.vista_izq = VistaCamara("Izquierda (CAM_B)")
-        self.vista_der = VistaCamara("Derecha (CAM_C)")
+        self.zona_auto = None  # zona de medida de la autoexposición (fracciones) o None = imagen entera
+        self.vista_izq = VistaCamara("Izquierda (CAM_B)", self._zona_marcada)
+        self.vista_der = VistaCamara("Derecha (CAM_C)", self._zona_marcada)
         vistas = QHBoxLayout()
         vistas.addWidget(self.vista_izq)
         vistas.addWidget(self.vista_der)
@@ -158,6 +239,18 @@ class VentanaGrabacion(QMainWindow):
         self.combo_etiqueta.addItems(ETIQUETAS)
         self.texto_notas = QLineEdit()
         self.texto_notas.setPlaceholderText("p. ej. palo derecho, pelota blanca, 3 m")
+        self.combo_franja = QComboBox()
+        self.combo_franja.addItems(FRANJAS)
+        self.combo_franja.setCurrentText(franja_actual())
+        self.combo_franja.setToolTip("Se elige sola según la hora; cámbiala si no corresponde a la luz real")
+        self.combos_tiro = {}
+        fila_tiro = QHBoxLayout()
+        for campo, opciones in ZONAS_TIRO.items():
+            combo = QComboBox()
+            combo.addItems([o or f"{campo}…" for o in opciones])
+            combo.setToolTip(f"{campo.capitalize()} del tiro (opcional; se guarda en metadatos.json)")
+            self.combos_tiro[campo] = combo
+            fila_tiro.addWidget(combo)
 
         self.boton_grabar = QPushButton()
         self.boton_grabar.setFocusPolicy(Qt.NoFocus)  # que Espacio no lo pulse dos veces
@@ -168,6 +261,8 @@ class VentanaGrabacion(QMainWindow):
         formulario = QFormLayout()
         formulario.addRow("Etiqueta:", self.combo_etiqueta)
         formulario.addRow("Notas:", self.texto_notas)
+        formulario.addRow("Franja:", self.combo_franja)
+        formulario.addRow("Tiro:", fila_tiro)
         disposicion = QVBoxLayout(grupo)
         disposicion.addLayout(formulario)
         disposicion.addWidget(self.boton_grabar)
@@ -248,6 +343,28 @@ class VentanaGrabacion(QMainWindow):
         self.spin_iso.setValue(800)
         self._enlazar(self.slider_iso, self.spin_iso)
 
+        self.spin_limite = QSpinBox()
+        self.spin_limite.setRange(0, exposicion_maxima_us(120))
+        self.spin_limite.setSingleStep(100)
+        self.spin_limite.setSuffix(" µs")
+        self.spin_limite.setSpecialValueText("sin límite")
+        self.spin_limite.setValue(LIMITE_AUTO_US)
+        self.spin_limite.setToolTip("Exposición máxima en automático: con poca luz sube el ISO en vez de "
+                                    "alargar la exposición, para que la pelota no deje estela")
+        self.spin_limite.valueChanged.connect(self._cambio_exposicion)
+
+        self.etiqueta_zona = QLabel()
+        self.boton_marcar_zona = QPushButton("Marcar zona")
+        self.boton_marcar_zona.setFocusPolicy(Qt.NoFocus)
+        self.boton_marcar_zona.setToolTip("Arrastra un rectángulo sobre una de las vistas: la luz se mide solo ahí")
+        self.boton_marcar_zona.clicked.connect(self._empezar_marcado_zona)
+        self.boton_zona_entera = QPushButton("Imagen entera")
+        self.boton_zona_entera.setFocusPolicy(Qt.NoFocus)
+        self.boton_zona_entera.clicked.connect(lambda: self._zona_marcada(None))
+        fila_zona = QHBoxLayout()
+        fila_zona.addWidget(self.boton_marcar_zona)
+        fila_zona.addWidget(self.boton_zona_entera)
+
         self.check_saturacion = QCheckBox("Resaltar píxeles saturados en rojo")
         self.check_saturacion.setChecked(True)
 
@@ -259,7 +376,13 @@ class VentanaGrabacion(QMainWindow):
         rejilla.addWidget(QLabel("ISO:"), 2, 0)
         rejilla.addWidget(self.slider_iso, 2, 1)
         rejilla.addWidget(self.spin_iso, 2, 2)
-        rejilla.addWidget(self.check_saturacion, 3, 0, 1, 3)
+        rejilla.addWidget(QLabel("Máx. auto:"), 3, 0)
+        rejilla.addWidget(self.spin_limite, 3, 1, 1, 2)
+        rejilla.addWidget(QLabel("Medida:"), 4, 0)
+        rejilla.addWidget(self.etiqueta_zona, 4, 1, 1, 2)
+        rejilla.addLayout(fila_zona, 5, 0, 1, 3)
+        rejilla.addWidget(self.check_saturacion, 6, 0, 1, 3)
+        self._mostrar_zona()
         self._actualizar_habilitado_exposicion()
         return grupo
 
@@ -318,6 +441,8 @@ class VentanaGrabacion(QMainWindow):
             fps=self.spin_fps.value(),
             exposicion_us=None if self.check_auto.isChecked() else self.spin_exposicion.value(),
             iso=self.spin_iso.value(),
+            limite_auto_us=self._limite_auto(),
+            zona_auto=self.zona_auto,
             calidad=self.spin_calidad.value(),
             color=self.check_color.isChecked(),
         )
@@ -352,8 +477,18 @@ class VentanaGrabacion(QMainWindow):
         if g.grabando:
             self._registrar_clip(g.terminar_clip())
         else:
-            g.empezar_clip(self.combo_etiqueta.currentText(), self.texto_notas.text().strip())
+            g.empezar_clip(self.combo_etiqueta.currentText(), self.texto_notas.text().strip(),
+                           extra=self._extra_clip())
         self._actualizar_modo_grabacion()
+
+    def _extra_clip(self):
+        """Franja horaria y descripción del tiro para metadatos.json."""
+        extra = {"franja": self.combo_franja.currentText()}
+        tiro = {campo: ZONAS_TIRO[campo][combo.currentIndex()] for campo, combo in self.combos_tiro.items()
+                if combo.currentIndex() > 0}
+        if tiro:
+            extra["tiro"] = tiro
+        return extra
 
     def _secuencia_activa(self):
         return self.secuencia is not None and self.secuencia.activa
@@ -366,7 +501,7 @@ class VentanaGrabacion(QMainWindow):
         elif self._camara_lista() and not self.grabadora.grabando:
             self.secuencia = Secuencia(self.grabadora, self.spin_partes.value(), self.spin_duracion.value(),
                                        self.spin_pausa.value(), self.combo_etiqueta.currentText(),
-                                       self.texto_notas.text().strip())
+                                       self.texto_notas.text().strip(), self._extra_clip())
             QApplication.beep()
         self._actualizar_modo_grabacion()
 
@@ -405,7 +540,8 @@ class VentanaGrabacion(QMainWindow):
         self.vista_izq.marcar_grabando(grabando)
         self.vista_der.marcar_grabando(grabando)
         ocupado = grabando or en_secuencia
-        for widget in (self.grupo_camara, self.combo_etiqueta, self.texto_notas, *self.controles_secuencia):
+        for widget in (self.grupo_camara, self.combo_etiqueta, self.texto_notas, self.combo_franja,
+                       *self.combos_tiro.values(), *self.controles_secuencia):
             widget.setEnabled(not ocupado)
 
     def _registrar_clip(self, resumen):
@@ -437,20 +573,52 @@ class VentanaGrabacion(QMainWindow):
         maximo = exposicion_maxima_us(self.spin_fps.value())
         for control in (self.slider_exposicion, self.spin_exposicion):
             control.setRange(EXPOSICION_MIN_US, maximo)
+        self.spin_limite.setMaximum(maximo)
 
     def _actualizar_habilitado_exposicion(self):
         manual = not self.check_auto.isChecked()
         for widget in (self.slider_exposicion, self.spin_exposicion, self.slider_iso, self.spin_iso):
             widget.setEnabled(manual)
+        for widget in (self.spin_limite, self.boton_marcar_zona, self.boton_zona_entera):
+            widget.setEnabled(not manual)
+
+    def _limite_auto(self):
+        valor = self.spin_limite.value()
+        return max(valor, EXPOSICION_MIN_US) if valor else None
+
+    def _empezar_marcado_zona(self):
+        self.vista_izq.empezar_marcado()
+        self.vista_der.empezar_marcado()
+        self.etiqueta_zona.setText("arrastra un rectángulo sobre una vista…")
+
+    def _zona_marcada(self, zona):
+        self.zona_auto = zona
+        self.vista_izq.cancelar_marcado()
+        self.vista_der.cancelar_marcado()
+        self._mostrar_zona()
+        self._cambio_exposicion()
+
+    def _mostrar_zona(self):
+        zona = self.zona_auto
+        self.vista_izq.poner_zona(zona)
+        self.vista_der.poner_zona(zona)
+        if zona is None:
+            self.etiqueta_zona.setText("imagen entera")
+        else:
+            x, y, ancho, alto = (round(100 * v) for v in zona)
+            self.etiqueta_zona.setText(f"x {x}–{x + ancho} %, y {y}–{y + alto} %")
 
     def _cambio_exposicion(self):
         self._actualizar_habilitado_exposicion()
         if self.grabadora is None or not self.grabadora.activa:
             return
-        if self.check_auto.isChecked():
-            self.grabadora.exposicion_automatica()
-        else:
-            self.grabadora.ajustar_exposicion(self.spin_exposicion.value(), self.spin_iso.value())
+        try:
+            if self.check_auto.isChecked():
+                self.grabadora.exposicion_automatica(self._limite_auto(), self.zona_auto)
+            else:
+                self.grabadora.ajustar_exposicion(self.spin_exposicion.value(), self.spin_iso.value())
+        except ValueError:
+            pass  # p. ej. límite mayor que el periodo de los FPS actuales; se valida al reiniciar
 
     # --- refresco periódico ---
 

@@ -1,0 +1,12 @@
+fecha,blob,modo,usb,fps_camara,hilos,fps,latencia_media_ms,latencia_p95_ms,frames_con_pelota,ida_y_vuelta_ms
+2026-10-23T16:31:07,pelota_v1_640x384.blob,vivo,HIGH,120,2,17.17,134.08,138.08,0/172,
+2026-10-23T16:31:23,pelota_v1_512x320.blob,vivo,HIGH,120,2,24.48,96.56,101.53,0/245,
+2026-10-23T16:31:38,pelota_v1_416x256.blob,vivo,HIGH,120,2,36.16,68.53,71.13,0/362,
+2026-10-23T16:31:53,pelota_v1_320x192.blob,vivo,HIGH,120,2,51.86,51.34,54.39,0/520,
+2026-10-23T16:32:16,pelota_v1_640x384.blob,vivo,HIGH,120,1,10.44,111.62,117.34,0/105,
+2026-10-23T16:32:32,pelota_v1_512x320.blob,vivo,HIGH,120,1,14.17,85.67,87.97,0/142,
+2026-10-23T16:32:47,pelota_v1_416x256.blob,vivo,HIGH,120,1,21.82,60.14,62.79,0/219,
+2026-10-23T16:33:02,pelota_v1_320x192.blob,vivo,HIGH,120,1,30.79,44.01,48.63,0/308,
+2026-10-23T16:42:00,pelota_v1_640x384.blob,clip,HIGH,120,2,,,,760/1580,96.31
+2026-10-23T16:43:27,pelota_v1_416x256.blob,clip,HIGH,120,2,,,,742/1580,49.69
+2026-10-23T16:44:33,pelota_v1_320x192.blob,clip,HIGH,120,2,,,,725/1580,36.73

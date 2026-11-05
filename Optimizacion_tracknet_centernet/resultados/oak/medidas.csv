@@ -1,0 +1,18 @@
+fecha,modo,variante,anchura,frames,entrada,cabeza_compartida,parametros,gmacs,shaves,hilos,usb,inferencias_s,posiciones_s,latencia_media_ms,latencia_p95_ms,lectura_host_ms,segundos,detalle
+2026-10-27T00:18:02,comprobar,a16_f3_640x400,16,3,640x400,False,296892,1.6271,6,1,SUPER,,,,,,,"{""clip"": ""20261023_133016/clip_001"", ""dif_max_calor"": 0.04543, ""dif_max_desplazamiento"": 0.25347, ""dif_max_diametro"": 0.22931, ""rango_calor"": 0.825, ""rango_desplazamiento"": 7.842, ""rango_diametro"": 5.71, ""dif_calor_orden_invertido"": 0.26161}"
+2026-10-27T00:18:07,comprobar,a8_f1_320x192,8,1,320x192,False,74508,0.097,6,1,SUPER,,,,,,,"{""clip"": ""20261023_133016/clip_001"", ""dif_max_calor"": 0.00697, ""dif_max_desplazamiento"": 0.08381, ""dif_max_diametro"": 0.11469, ""rango_calor"": 0.343, ""rango_desplazamiento"": 1.7, ""rango_diametro"": 2.434}"
+2026-10-27T00:18:11,comprobar,a24_f3_320x192,24,3,320x192,False,666324,0.8726,6,1,SUPER,,,,,,,"{""clip"": ""20261023_133016/clip_001"", ""dif_max_calor"": 0.01709, ""dif_max_desplazamiento"": 0.13645, ""dif_max_diametro"": 0.11667, ""rango_calor"": 0.36, ""rango_desplazamiento"": 1.715, ""rango_diametro"": 2.953, ""dif_calor_orden_invertido"": 0.12898}"
+2026-10-27T00:18:23,en vivo,a16_f1_320x192,16,1,320x192,False,296340,0.3851,6,2,SUPER,120.1,120.1,16.6,17.5,0.34,10.0,
+2026-10-27T00:18:37,en vivo,a16_f1_640x400,16,1,640x400,False,296340,1.6046,6,2,SUPER,57.9,57.9,46.0,51.6,0.66,10.0,
+2026-10-27T00:18:52,en vivo,a16_f3_320x192,16,3,320x192,False,296892,0.3905,6,2,SUPER,40.0,120.1,16.1,17.6,0.53,10.0,
+2026-10-27T00:19:07,en vivo,a16_f3_320x192_cc,16,3,320x192,True,278332,0.3197,6,2,SUPER,40.0,120.1,14.9,16.4,0.53,10.0,
+2026-10-27T00:19:21,en vivo,a16_f3_640x400,16,3,640x400,False,296892,1.6271,6,2,SUPER,40.0,120.0,43.2,44.8,1.35,10.0,
+2026-10-27T00:19:35,en vivo,a16_f3_640x400_cc,16,3,640x400,True,278332,1.3322,6,2,SUPER,40.0,120.0,40.4,41.3,1.38,10.0,
+2026-10-27T00:19:51,en vivo,a24_f1_320x192,24,1,320x192,False,665500,0.8645,6,2,SUPER,120.1,120.1,20.4,21.2,0.33,10.0,
+2026-10-27T00:20:06,en vivo,a24_f1_640x400,24,1,640x400,False,665500,3.6019,6,2,SUPER,35.1,35.1,67.9,71.5,0.62,10.0,
+2026-10-27T00:20:20,en vivo,a24_f3_320x192,24,3,320x192,False,666324,0.8726,6,2,SUPER,40.0,120.0,21.0,23.7,0.54,10.0,
+2026-10-27T00:20:36,en vivo,a24_f3_640x400,24,3,640x400,False,666324,3.6357,6,2,SUPER,32.9,98.6,126.7,150.0,1.33,10.0,
+2026-10-27T00:20:50,en vivo,a8_f1_320x192,8,1,320x192,False,74508,0.097,6,2,SUPER,120.1,120.1,12.6,13.2,0.33,10.0,
+2026-10-27T00:21:04,en vivo,a8_f1_640x400,8,1,640x400,False,74508,0.404,6,2,SUPER,81.8,81.8,36.2,40.8,0.63,10.0,
+2026-10-27T00:21:19,en vivo,a8_f3_320x192,8,3,320x192,False,74788,0.0997,6,2,SUPER,40.0,120.0,16.8,17.3,0.57,10.0,
+2026-10-27T00:21:33,en vivo,a8_f3_640x400,8,3,640x400,False,74788,0.4152,6,2,SUPER,40.0,120.0,36.3,37.0,1.39,10.0,

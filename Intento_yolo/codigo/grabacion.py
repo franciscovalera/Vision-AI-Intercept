@@ -25,7 +25,7 @@ import csv
 import json
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -45,11 +45,31 @@ TAMANO_PREVIEW_COLOR = (320, 180)
 EXPOSICION_MIN_US = 20
 ISO_MIN, ISO_MAX = 100, 1600
 
-ETIQUETAS = ["prueba", "fondo", "tiro raso", "tiro alto", "rebote", "pelota estática", "negativo"]
+ETIQUETAS = ["prueba", "fondo", "tiro raso", "tiro alto", "rebote", "pelota estática", "negativo",
+             "calibración", "referencia"]
+# Franja horaria de la grabación: la luz cambia mucho (de noche solo hay luz artificial)
+FRANJAS = ["mañana", "tarde", "noche"]
+# Descripción opcional de cada tiro (se guarda en metadatos.json si no está vacía)
+ZONAS_TIRO = {
+    "ancho": ["", "cerca de la cámara", "centro", "lejos de la cámara", "fuera"],
+    "altura": ["", "raso", "media", "alto"],
+    "velocidad": ["", "suave", "media", "fuerte"],
+}
+LIMITE_AUTO_US = 2000  # exposición máxima por defecto en automático: limita la estela de la pelota
 
 
 def exposicion_maxima_us(fps):
     return int(1e6 / fps)
+
+
+def tamano_mono(resolucion):
+    """(ancho, alto) en píxeles de las imágenes mono a esa resolución."""
+    return (640 if resolucion == 400 else 1280), resolucion
+
+
+def franja_actual():
+    hora = datetime.now().hour
+    return "mañana" if 6 <= hora < 14 else "tarde" if hora < 20 else "noche"
 
 
 @dataclass
@@ -58,6 +78,11 @@ class Configuracion:
     fps: float = 120
     exposicion_us: int | None = None  # None = autoexposición
     iso: int = 800
+    # Solo en automático: exposición máxima (la cámara sube el ISO en vez de alargar la exposición)
+    limite_auto_us: int | None = LIMITE_AUTO_US
+    # Solo en automático: zona donde se mide la luz, (x, y, ancho, alto) en fracciones de la imagen;
+    # None = imagen entera. Sirve para que las ventanas no oscurezcan la zona de juego.
+    zona_auto: tuple | None = None
     calidad: int = 95
     color: bool = False
 
@@ -73,8 +98,28 @@ class Configuracion:
                                  f"{EXPOSICION_MIN_US} y {exposicion_maxima_us(self.fps)} µs")
             if not ISO_MIN <= self.iso <= ISO_MAX:
                 raise ValueError(f"el ISO debe estar entre {ISO_MIN} y {ISO_MAX}")
+        if self.limite_auto_us is not None:
+            if not EXPOSICION_MIN_US <= self.limite_auto_us <= exposicion_maxima_us(self.fps):
+                raise ValueError(f"a {self.fps:g} FPS el límite de la exposición automática debe estar entre "
+                                 f"{EXPOSICION_MIN_US} y {exposicion_maxima_us(self.fps)} µs")
+        if self.zona_auto is not None:
+            x, y, ancho, alto = self.zona_auto
+            if not (0 <= x < 1 and 0 <= y < 1 and 0 < ancho <= 1 - x + 1e-6 and 0 < alto <= 1 - y + 1e-6):
+                raise ValueError("la zona de medida debe estar dentro de la imagen (fracciones entre 0 y 1)")
         if not 1 <= self.calidad <= 100:
             raise ValueError("la calidad MJPEG debe estar entre 1 y 100")
+
+
+def aplicar_autoexposicion(control, config):
+    """Configura un CameraControl en automático con el límite y la zona de medida de config."""
+    control.setAutoExposureEnable()
+    if config.limite_auto_us is not None:
+        control.setAutoExposureLimit(config.limite_auto_us)
+    ancho, alto = tamano_mono(config.resolucion)
+    # Coordenadas en píxeles de la imagen de salida (comprobado con la cámara a 640x400)
+    x, y, w, h = config.zona_auto or (0, 0, 1, 1)
+    control.setAutoExposureRegion(int(x * ancho), int(y * alto), max(1, int(w * ancho)), max(1, int(h * alto)))
+    return control
 
 
 def crear_pipeline(config):
@@ -91,6 +136,8 @@ def crear_pipeline(config):
         mono.setFps(config.fps)
         if config.exposicion_us is not None:
             mono.initialControl.setManualExposure(config.exposicion_us, config.iso)
+        else:
+            aplicar_autoexposicion(mono.initialControl, config)
         control.out.link(mono.inputControl)
 
         encoder = pipeline.create(dai.node.VideoEncoder)
@@ -340,10 +387,15 @@ class Grabadora:
         with self._lock:
             self._comandos.append(control)
 
-    def exposicion_automatica(self):
+    def exposicion_automatica(self, limite_us=LIMITE_AUTO_US, zona=None):
+        """Autoexposición en vivo con exposición máxima limite_us (None = sin límite) y zona de medida
+        (x, y, ancho, alto) en fracciones de la imagen (None = imagen entera)."""
+        nueva = replace(self.config, exposicion_us=None, limite_auto_us=limite_us,
+                        zona_auto=tuple(zona) if zona is not None else None)
+        nueva.validar()
         self.config.exposicion_us = None
-        control = dai.CameraControl()
-        control.setAutoExposureEnable()
+        self.config.limite_auto_us, self.config.zona_auto = nueva.limite_auto_us, nueva.zona_auto
+        control = aplicar_autoexposicion(dai.CameraControl(), self.config)
         with self._lock:
             self._comandos.append(control)
 
@@ -425,7 +477,7 @@ class Secuencia:
     No usa hilos: hay que llamar a actualizar() periódicamente (cada pocos ms).
     """
 
-    def __init__(self, grabadora, partes, duracion_s, pausa_s, etiqueta="prueba", notas=""):
+    def __init__(self, grabadora, partes, duracion_s, pausa_s, etiqueta="prueba", notas="", extra=None):
         if partes < 1 or duracion_s <= 0 or pausa_s < 0:
             raise ValueError("la secuencia necesita al menos 1 parte, duración > 0 y pausa >= 0")
         self.grabadora = grabadora
@@ -434,6 +486,7 @@ class Secuencia:
         self.pausa_s = pausa_s
         self.etiqueta = etiqueta
         self.notas = notas
+        self.extra = extra or {}
         self.nombre = grabadora.sesion.siguiente_clip()
         self.parte = 0
         self.estado = None  # "grabando", "pausa", "terminada" o "cancelada"
@@ -475,7 +528,7 @@ class Secuencia:
 
     def _empezar_parte(self):
         self.parte += 1
-        extra = {"secuencia": {
+        extra = {**self.extra, "secuencia": {
             "clip": self.nombre,
             "parte": self.parte,
             "partes": self.partes,
