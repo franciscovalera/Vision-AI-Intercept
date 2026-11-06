@@ -1,0 +1,14 @@
+{
+ "nombre": "a16_f3",
+ "anchura": 16,
+ "frames": 3,
+ "epocas": 60,
+ "muestras_epoca": 40000,
+ "lote": 32,
+ "lr": 0.002,
+ "con_pelota": 0.7,
+ "trabajadores": 10,
+ "limite_horas": 2.5,
+ "reanudar": false,
+ "dispositivo": "cuda"
+}

@@ -1,0 +1,15 @@
+{
+ "nombre": "a24_f3",
+ "anchura": 24,
+ "frames": 3,
+ "epocas": 80,
+ "muestras_epoca": 40000,
+ "lote": 32,
+ "lr": 0.002,
+ "con_pelota": 0.7,
+ "trabajadores": 10,
+ "limite_horas": null,
+ "fin": "07:30",
+ "reanudar": true,
+ "dispositivo": "cuda"
+}

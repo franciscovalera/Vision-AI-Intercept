@@ -8,8 +8,13 @@ Usa que a 120 FPS la pelota se mueve poco y de forma suave entre frames:
      parecido. Los que no encajan empiezan una trayectoria nueva. Una trayectoria muere si pasa
      más de --hueco-max segundos sin candidatos (la pelota ha salido o está tapada mucho rato).
   2. Se quedan las trayectorias creíbles (al menos --min-frames frames y alguno con confianza
-     >= 0,5); el resto son falsos positivos sueltos. Si dos se solapan en el tiempo (solo hay una
-     pelota), en cada frame gana la de mayor confianza acumulada.
+     >= 0,5); el resto son falsos positivos sueltos. Se descartan también los objetos fijos:
+     trayectorias que no se mueven (desviación de la posición < max(1,5 px, 10 % del diámetro))
+     durante más de --fijo-max segundos con confianza media < 0,5 (una rueda, un borde oscuro, algo
+     redondo cortado por el borde de la imagen). YOLO los ve con poca seguridad en casi todos los
+     frames y, por su longitud, ganarían a la pelota de verdad en confianza acumulada.
+     Si dos trayectorias se solapan en el tiempo (solo hay una pelota), en cada frame gana la de
+     mayor confianza acumulada.
   3. Huecos dentro de una trayectoria (frames sin detección): se rellenan ajustando una parábola
      en el tiempo a x(t) e y(t) con los puntos de alrededor (es el movimiento de una pelota en el
      aire visto en la imagen, bien aproximado en tramos cortos); el diámetro, lineal.
@@ -98,13 +103,25 @@ def ajuste_parabola(ts, valores, t):
     return np.polyval(np.polyfit(ts - t0, valores, grado), t - t0)
 
 
+def es_objeto_fijo(c, p, tiempos, args):
+    """Trayectoria larga, inmóvil y de confianza baja: un objeto del fondo, no la pelota."""
+    frames = c["frame"][p].astype(int)
+    if tiempos[frames.max()] - tiempos[frames.min()] < args.fijo_max or c["conf"][p].mean() >= CONF_SEGURA:
+        return False
+    diametro = np.median((c["ancho"][p] + c["alto"][p]) / 2)
+    return max(c["x"][p].std(), c["y"][p].std()) < max(1.5, 0.1 * diametro)
+
+
 def etiquetar(c, pistas, tiempos, ancho_img, alto_img, args):
     n = len(tiempos)
     et = {"x": np.full(n, np.nan), "y": np.full(n, np.nan), "diametro": np.full(n, np.nan),
           "visibilidad": np.zeros(n, int), "origen": np.array(["ninguna"] * n, dtype=object),
           "conf": np.zeros(n), "pista": np.full(n, -1), "motivo": [[] for _ in range(n)]}
 
-    buenas = [p for p in pistas if len(p) >= args.min_frames and c["conf"][p].max() >= CONF_SEGURA]
+    fijas = [p for p in pistas if es_objeto_fijo(c, p, tiempos, args)]
+    de_fijas = {k for p in fijas for k in p}
+    buenas = [p for p in pistas if len(p) >= args.min_frames and c["conf"][p].max() >= CONF_SEGURA
+              and p[0] not in de_fijas]
     buenas.sort(key=lambda p: -c["conf"][p].sum())  # la de más confianza acumulada gana los frames
     elegidos = set()
     for numero, p in enumerate(buenas):
@@ -129,10 +146,13 @@ def etiquetar(c, pistas, tiempos, ancho_img, alto_img, args):
     revisar_coherencia(et, args)
     for k in np.flatnonzero(c["conf"] >= CONF_SEGURA):  # detecciones seguras que no se han usado
         f = int(c["frame"][k])
+        if k in de_fijas:
+            continue
         if k not in elegidos and et["pista"][f] < 0:
             et["motivo"][f].append("detección descartada")
         elif k not in elegidos:
             et["motivo"][f].append("otra pelota posible")
+    et["fijas"] = len(fijas)
     return et
 
 
@@ -226,6 +246,7 @@ def limpiar(ruta_candidatos, args):
     print(f"{relativa} {camara}: {len(tiempos)} frames, {con_pelota} con pelota "
           f"({int((et['origen'] == 'yolo').sum())} YOLO + {int((et['origen'] == 'interpolada').sum())} "
           f"interpoladas), {len(set(et['pista'][et['pista'] >= 0]))} trayectorias, "
+          f"{et['fijas']} objetos fijos descartados, "
           f"{sum(bool(m) for m in et['motivo'])} dudosos, {len(revisadas)} revisados conservados")
 
 
@@ -236,6 +257,8 @@ def main():
     parser.add_argument("--hueco-max", type=float, default=0.15, help="s sin detección antes de cortar la pista")
     parser.add_argument("--min-frames", type=int, default=4, help="frames mínimos de una trayectoria creíble")
     parser.add_argument("--vecinos", type=int, default=4, help="puntos a cada lado para ajustar la parábola")
+    parser.add_argument("--fijo-max", type=float, default=1.0,
+                        help="s que puede estar inmóvil una trayectoria de confianza baja antes de tomarla por objeto fijo")
     args = parser.parse_args()
     args.etiquetas = RAIZ / "datos" / "etiquetas"
 
